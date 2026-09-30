@@ -3,7 +3,7 @@ package com.treasurenova.bep20manager.data
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import androidx.security.crypto.MasterKeys
 import com.treasurenova.bep20manager.logic.AccountInput
 import com.treasurenova.bep20manager.logic.AddressRow
 import com.treasurenova.bep20manager.logic.BatchSummary
@@ -16,13 +16,11 @@ class AccountStore(context: Context) {
     private val prefs: SharedPreferences
 
     init {
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
+        val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
         prefs = EncryptedSharedPreferences.create(
-            context,
             "tn_accounts",
-            masterKey,
+            masterKeyAlias,
+            context,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )
