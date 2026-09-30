@@ -422,6 +422,7 @@ fun HistoryScreen(nav: NavHostController, model: AppViewModel) {
 @Composable
 fun SettingsScreen(nav: NavHostController, model: AppViewModel) {
     var url by remember { mutableStateOf(model.loginUrl) }
+    var urlError by remember { mutableStateOf("") }
     var confirmClearAccounts by remember { mutableStateOf(false) }
     var confirmClearHistory by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(Navy).padding(20.dp).verticalScroll(rememberScrollState())) {
@@ -429,7 +430,14 @@ fun SettingsScreen(nav: NavHostController, model: AppViewModel) {
         Text("This app only reads a USDT BEP20 deposit address. It stops if the site shows a security, legal, or regional block. 2FA pauses for you. There is no withdraw, transfer, or trade action.", color = Muted)
         Spacer(Modifier.height(12.dp))
         Field("Login URL", url) { url = it }
-        Button(onClick = { model.setLoginUrl(url) }, colors = ButtonDefaults.buttonColors(containerColor = ActionBlue)) { Text("Save URL") }
+        Button(onClick = {
+            urlError = if (model.setLoginUrl(url)) {
+                ""
+            } else {
+                "Login URL must stay on https://treasurenova.net or https://www.treasurenova.net"
+            }
+        }, colors = ButtonDefaults.buttonColors(containerColor = ActionBlue)) { Text("Save URL") }
+        if (urlError.isNotEmpty()) Text(urlError, color = DangerRed)
         Spacer(Modifier.height(12.dp))
         OutlinedButton(onClick = { confirmClearAccounts = true }) { Text("Clear saved accounts", color = DangerRed) }
         OutlinedButton(onClick = { confirmClearHistory = true }) { Text("Clear history", color = DangerRed) }

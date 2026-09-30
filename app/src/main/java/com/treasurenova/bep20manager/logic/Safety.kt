@@ -26,7 +26,7 @@ object Safety {
     fun allowClick(label: String): Boolean {
         val value = label.trim().lowercase()
         if (value.isEmpty()) return false
-        if (value == "confirm" || value == "login" || value == "log in" || value == "sign in" ||
+        if (value == "login" || value == "log in" || value == "sign in" ||
             value == "usdt" || value == "wallet" || value == "deposit" ||
             value == "recharge" || value == "bep20" || value == "bep-20" ||
             value == "bnb smart chain" || value == "bsc" || value == "log out" ||

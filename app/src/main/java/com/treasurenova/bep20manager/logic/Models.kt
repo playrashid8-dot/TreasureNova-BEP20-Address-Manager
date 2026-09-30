@@ -11,6 +11,7 @@ data class AddressRow(
     val bep20Address: String,
     val status: String,
     val error: String = "",
+    val haltBatch: Boolean = false,
 )
 
 data class BatchSummary(
@@ -33,6 +34,10 @@ data class PageSnapshot(
     val networkText: String? = null,
     val bep20Value: String? = null,
     val loggedOut: Boolean = false,
+    val sessionCleared: Boolean = false,
+    val depositBlockText: String? = null,
+    val depositBlocks: List<String> = emptyList(),
+    val authenticatedUiVisible: Boolean = false,
 )
 
 sealed class AddressDecision {

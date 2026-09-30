@@ -5,6 +5,7 @@ import com.treasurenova.bep20manager.logic.AddressExtractor
 import com.treasurenova.bep20manager.logic.AddressRow
 import com.treasurenova.bep20manager.logic.BatchEngine
 import com.treasurenova.bep20manager.logic.PageSnapshot
+import com.treasurenova.bep20manager.logic.SessionIsolation
 
 interface PageBridge {
     suspend fun loadLogin()
@@ -13,7 +14,7 @@ interface PageBridge {
     suspend fun selectUsdt(): PageSnapshot
     suspend fun selectBep20(): PageSnapshot
     suspend fun readSnapshot(): PageSnapshot
-    suspend fun logout()
+    suspend fun logout(): PageSnapshot
 }
 
 class SessionController(
@@ -36,36 +37,27 @@ class SessionController(
         onStep(account.username, "Login", "Opening login")
         bridge.loadLogin()
         val afterLogin = bridge.fillAndSubmit(account.username, account.password)
-        val loginRow = gate(account.username, afterLogin, stage = "Login")
-        if (loginRow != null) {
-            bridge.logout()
-            return loginRow
-        }
+        gate(account.username, afterLogin, stage = "Login")?.let { return finish(account.username, it) }
         onStep(account.username, "Wallet", "Opening wallet")
         val wallet = bridge.openWalletDeposit()
-        gate(account.username, wallet, stage = "Wallet")?.let {
-            bridge.logout()
-            return it
-        }
+        gate(account.username, wallet, stage = "Wallet")?.let { return finish(account.username, it) }
         onStep(account.username, "USDT", "Selecting USDT")
         val usdt = bridge.selectUsdt()
-        gate(account.username, usdt, stage = "USDT")?.let {
-            bridge.logout()
-            return it
-        }
+        gate(account.username, usdt, stage = "USDT")?.let { return finish(account.username, it) }
         onStep(account.username, "BEP20", "Selecting BEP20")
         val network = bridge.selectBep20()
-        gate(account.username, network, stage = "BEP20")?.let {
-            bridge.logout()
-            return it
-        }
+        gate(account.username, network, stage = "BEP20")?.let { return finish(account.username, it) }
         onStep(account.username, "Address", "Reading address")
         val snap = bridge.readSnapshot()
         val decided = continueAfterTwoFactor(account.username, snap)
         val row = AddressExtractor.toRow(account.username, AddressExtractor.decide(decided))
-        onStep(account.username, "Logout", row.status)
-        bridge.logout()
-        return row
+        return finish(account.username, row)
+    }
+
+    private suspend fun finish(username: String, row: AddressRow): AddressRow {
+        onStep(username, "Logout", "Verifying logout")
+        val snap = bridge.logout()
+        return SessionIsolation.apply(row, loggedOut = snap.loggedOut, sessionCleared = snap.sessionCleared)
     }
 
     private suspend fun continueAfterTwoFactor(username: String, start: PageSnapshot): PageSnapshot {

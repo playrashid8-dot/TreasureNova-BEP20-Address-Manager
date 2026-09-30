@@ -11,6 +11,7 @@ import com.treasurenova.bep20manager.data.SettingsStore
 import com.treasurenova.bep20manager.logic.AccountInput
 import com.treasurenova.bep20manager.logic.AddressRow
 import com.treasurenova.bep20manager.logic.BatchSummary
+import com.treasurenova.bep20manager.logic.SiteOrigin
 import kotlinx.coroutines.CompletableDeferred
 import java.util.UUID
 
@@ -67,9 +68,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
-    fun setLoginUrl(url: String) {
-        settingsStore.setLoginUrl(url)
+    fun setLoginUrl(url: String): Boolean {
+        val trimmed = url.trim()
+        if (!SiteOrigin.isAllowed(trimmed)) return false
+        settingsStore.setLoginUrl(trimmed)
         loginUrl = settingsStore.loginUrl()
+        return SiteOrigin.isAllowed(loginUrl)
     }
 
     fun clearHistory() {

@@ -21,6 +21,10 @@ object PageScripts {
             el.dispatchEvent(new Event('input', {bubbles:true}));
             el.dispatchEvent(new Event('change', {bubbles:true}));
           }
+          function safeLoginLabel(label){
+            var v = (label || '').replace(/\s+/g,' ').trim().toLowerCase();
+            return v === 'login' || v === 'log in' || v === 'sign in';
+          }
           function clickExact(wanted){
             if (forbidden(wanted) || !window.__tn.allow(wanted)) return false;
             var nodes = document.querySelectorAll('button,a,li,span,div');
@@ -44,9 +48,6 @@ object PageScripts {
           }
           function twoFactor(){
             var b = bodyText().toLowerCase();
-            if (b.indexOf('verification amount') >= 0 && b.indexOf('authenticator') < 0 && b.indexOf('2fa') < 0) {
-              /* payment-amount copy is not 2FA */
-            }
             return b.indexOf('authenticator') >= 0 || b.indexOf('two-factor') >= 0 || b.indexOf('2fa') >= 0 || b.indexOf('enter the 6') >= 0 || b.indexOf('google verification code') >= 0;
           }
           function loginError(){
@@ -55,62 +56,111 @@ object PageScripts {
             for (var i=0;i<marks.length;i++){ if (b.indexOf(marks[i]) >= 0) return marks[i]; }
             return '';
           }
-          function readBep20(){
-            var nodes = document.querySelectorAll('div,span,p,label,h1,h2,h3');
+          function loginRoot(){
+            var pass = document.querySelector('input[type="password"]');
+            if (!pass) return null;
+            var form = pass.closest ? pass.closest('form') : null;
+            if (form) return form;
+            var node = pass.parentElement;
+            if (node && node.parentElement && node.parentElement.tagName !== 'BODY') return node.parentElement;
+            return node;
+          }
+          function collectLoginControls(){
+            var root = loginRoot();
+            var action = '';
+            if (root && root.tagName === 'FORM') action = root.getAttribute('action') || '';
+            var nodes = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+            var els = [];
+            var out = [];
             for (var i=0;i<nodes.length;i++){
-              var label = text(nodes[i]);
-              if (!/^USDT Deposit Address\s*\(BEP-?20\)$/i.test(label) && label.toLowerCase() !== 'bep20' && label.toLowerCase() !== 'bep-20' && label.toLowerCase() !== 'bnb smart chain') continue;
-              if (/TRC/i.test(label)) continue;
-              var node = nodes[i].parentElement;
-              for (var depth=0; depth<5 && node; depth++){
-                var block = text(node);
-                if (/TRC-?20/i.test(block.split('USDT Deposit Address')[0] || '') && !/BEP-?20/i.test(label)) break;
-                var match = block.match(/0x[a-fA-F0-9]{40}/);
-                var own = text(nodes[i]);
-                if (match && /BEP-?20|BNB Smart Chain|BSC/i.test(block)) {
-                  var after = block.split(/USDT Deposit Address\s*\(BEP-?20\)/i)[1] || block;
-                  var precise = after.match(/0x[a-fA-F0-9]{40}/);
-                  if (/TRC-?20/i.test(after.slice(0, precise ? after.indexOf(precise[0]) : 0))) { node = node.parentElement; continue; }
-                  return {present:true, network: own || 'BEP-20', value: (precise||match)[0]};
-                }
-                node = node.parentElement;
-              }
+              var el = nodes[i];
+              var tag = el.tagName.toLowerCase();
+              var type = (el.getAttribute('type') || '').toLowerCase();
+              var label = tag === 'input' ? (el.value || '') : text(el);
+              label = (label || '').replace(/\s+/g,' ').trim();
+              if (!label || label.length > 48) continue;
+              var inLogin = !!(root && root.contains && root.contains(el));
+              var submit = inLogin && (type === 'submit' || (tag === 'button' && (type === '' || type === 'submit')));
+              els.push(el);
+              out.push({index: out.length, text: label, tag: tag, type: type, inLoginForm: inLogin, submitControl: submit, formAction: inLogin ? action : ''});
             }
-            var titles = document.querySelectorAll('.recharge-required-modal__address-title');
-            for (var j=0;j<titles.length;j++){
-              if (!/BEP-?20/i.test(text(titles[j]))) continue;
-              var row = titles[j].parentElement && titles[j].parentElement.parentElement;
-              var valueEl = row ? row.querySelector('.recharge-required-modal__address-value') : null;
-              return {present:true, network:'BEP-20', value: text(valueEl)};
+            window.__tnLoginEls = els;
+            return out;
+          }
+          function depositBlocks(){
+            var nodes = document.querySelectorAll('section, article, li, tr, div, p');
+            var out = [];
+            var seen = {};
+            for (var i=0;i<nodes.length;i++){
+              var block = text(nodes[i]);
+              if (!block || block.length > 800) continue;
+              if (!/usdt|bep-?20|bnb|trc|tron|0x/i.test(block)) continue;
+              if (seen[block]) continue;
+              seen[block] = 1;
+              out.push(block);
+              if (out.length >= 40) break;
             }
-            return {present:false, network:'', value:''};
+            return out;
+          }
+          function pageState(){
+            return {
+              loginFieldsFound: !!document.querySelector('input[type="password"]'),
+              blockedMessage: blocked(),
+              twoFactorVisible: twoFactor(),
+              loginError: loginError(),
+              depositBlocks: depositBlocks(),
+              loggedOut: false,
+              authenticatedUiVisible: false
+            };
           }
           window.__tn = {
             allow: function(label){ return !forbidden(label); },
-            fillLogin: function(user, pass){
+            listLoginControls: function(){
+              return JSON.stringify(collectLoginControls());
+            },
+            fillLogin: function(user, pass, index){
+              var state = pageState();
               var userEl = document.querySelector('input[placeholder="Username/Email"]') || document.querySelector('input[placeholder*="Username" i]');
               var passEl = document.querySelector('input[placeholder="Password"]') || document.querySelector('input[type="password"]');
-              if (!userEl || !passEl) return JSON.stringify({loginFieldsFound:false, loginSubmitted:false, blockedMessage:blocked(), twoFactorVisible:twoFactor(), loginError:loginError()});
+              state.loginFieldsFound = !!(userEl && passEl);
+              state.loginSubmitted = false;
+              if (!userEl || !passEl) return JSON.stringify(state);
+              var controls = collectLoginControls();
+              var meta = null;
+              for (var i=0;i<controls.length;i++){
+                if (controls[i].index === index) meta = controls[i];
+              }
+              var el = window.__tnLoginEls ? window.__tnLoginEls[index] : null;
+              if (!meta || !el || !meta.inLoginForm || !safeLoginLabel(meta.text) || forbidden(meta.text)) {
+                return JSON.stringify(state);
+              }
               setVal(userEl, user);
               setVal(passEl, pass);
-              var root = passEl.closest('form');
-              var scope = root ? (root.parentElement || root) : document;
-              var buttons = scope.querySelectorAll('button');
-              var submitted = false;
-              for (var i=0;i<buttons.length;i++){
-                var t = text(buttons[i]);
-                if (t === 'Confirm' && !forbidden(t)) { buttons[i].click(); submitted = true; break; }
-              }
-              return JSON.stringify({loginFieldsFound:true, loginSubmitted:submitted, blockedMessage:blocked(), twoFactorVisible:twoFactor(), loginError:loginError()});
+              el.click();
+              state.loginSubmitted = true;
+              return JSON.stringify(state);
             },
             clickLabel: function(label){
               var ok = clickExact(label);
-              var bep = readBep20();
-              return JSON.stringify({clicked:ok, blockedMessage:blocked(), twoFactorVisible:twoFactor(), loginError:loginError(), bep20LabelPresent:bep.present, networkText:bep.network, bep20Value:bep.value});
+              var state = pageState();
+              state.clicked = ok;
+              return JSON.stringify(state);
+            },
+            logoutProbe: function(){
+              var state = pageState();
+              var loginFields = !!document.querySelector('input[type="password"]');
+              var b = bodyText().toLowerCase();
+              var auth = false;
+              if (!loginFields) {
+                if (b.indexOf('deposit address') >= 0 || b.indexOf('log out') >= 0 || b.indexOf('logout') >= 0 || b.indexOf('sign out') >= 0) auth = true;
+              }
+              state.loginFieldsFound = loginFields;
+              state.authenticatedUiVisible = auth;
+              state.loggedOut = false;
+              return JSON.stringify(state);
             },
             snapshot: function(){
-              var bep = readBep20();
-              return JSON.stringify({loginFieldsFound:!!document.querySelector('input[type="password"]'), blockedMessage:blocked(), twoFactorVisible:twoFactor(), loginError:loginError(), bep20LabelPresent:bep.present, networkText:bep.network, bep20Value:bep.value});
+              return JSON.stringify(pageState());
             }
           };
         })();
@@ -118,13 +168,17 @@ object PageScripts {
 
     fun install(): String = library
 
-    fun fillLogin(username: String, password: String): String =
-        "window.__tn.fillLogin(${Safety.jsString(username)}, ${Safety.jsString(password)})"
+    fun listLoginControls(): String = "window.__tn.listLoginControls()"
+
+    fun fillLogin(username: String, password: String, controlIndex: Int): String =
+        "window.__tn.fillLogin(${Safety.jsString(username)}, ${Safety.jsString(password)}, $controlIndex)"
 
     fun clickLabel(label: String): String {
         require(Safety.allowClick(label)) { "Refusing to click: $label" }
         return "window.__tn.clickLabel(${Safety.jsString(label)})"
     }
+
+    fun logoutProbe(): String = "window.__tn.logoutProbe()"
 
     fun snapshot(): String = "window.__tn.snapshot()"
 }

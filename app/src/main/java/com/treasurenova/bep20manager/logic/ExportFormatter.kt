@@ -117,7 +117,7 @@ object BatchEngine {
             }
             val row = onAccount(index, account)
             rows += row
-            if (row.status == "Blocked") break
+            if (row.status == "Blocked" || row.haltBatch) break
         }
         return rows
     }

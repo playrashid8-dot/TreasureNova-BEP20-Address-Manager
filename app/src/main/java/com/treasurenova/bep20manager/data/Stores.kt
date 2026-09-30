@@ -7,6 +7,7 @@ import androidx.security.crypto.MasterKey
 import com.treasurenova.bep20manager.logic.AccountInput
 import com.treasurenova.bep20manager.logic.AddressRow
 import com.treasurenova.bep20manager.logic.BatchSummary
+import com.treasurenova.bep20manager.logic.SiteOrigin
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -130,9 +131,14 @@ class HistoryStore(context: Context) {
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("tn_settings", Context.MODE_PRIVATE)
 
-    fun loginUrl(): String = prefs.getString("login_url", "https://treasurenova.net/") ?: "https://treasurenova.net/"
+    fun loginUrl(): String {
+        val saved = prefs.getString("login_url", SiteOrigin.DEFAULT_LOGIN_URL) ?: SiteOrigin.DEFAULT_LOGIN_URL
+        return if (SiteOrigin.isAllowed(saved)) saved else SiteOrigin.DEFAULT_LOGIN_URL
+    }
 
     fun setLoginUrl(url: String) {
-        prefs.edit().putString("login_url", url.trim()).apply()
+        val trimmed = url.trim()
+        if (!SiteOrigin.isAllowed(trimmed)) return
+        prefs.edit().putString("login_url", trimmed).apply()
     }
 }

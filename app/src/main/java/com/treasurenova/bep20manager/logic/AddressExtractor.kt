@@ -1,37 +1,24 @@
 package com.treasurenova.bep20manager.logic
 
 object AddressExtractor {
-    private val evm = Regex("^0x[a-fA-F0-9]{40}$")
-
     fun decide(snapshot: PageSnapshot): AddressDecision {
         val blocked = snapshot.blockedMessage?.trim().orEmpty()
         if (blocked.isNotEmpty()) return AddressDecision.Blocked(blocked)
         val loginError = snapshot.loginError?.trim().orEmpty()
         if (loginError.isNotEmpty()) return AddressDecision.LoginFailed(loginError)
         if (snapshot.twoFactorVisible) return AddressDecision.NeedsTwoFactor
-        if (!snapshot.bep20LabelPresent) {
-            return AddressDecision.Missing("USDT BEP20 deposit address label was not visible")
+        if (snapshot.depositBlocks.isNotEmpty()) {
+            return UsdtBep20Matcher.fromBlocks(snapshot.depositBlocks)
         }
-        val network = snapshot.networkText?.trim().orEmpty()
-        if (!isBep20Network(network)) {
-            return AddressDecision.NetworkMismatch(network.ifEmpty { "unknown" })
-        }
-        val raw = snapshot.bep20Value?.trim().orEmpty()
-        if (raw.isEmpty() || raw == "-" || raw == "null") {
-            return AddressDecision.Missing("USDT BEP20 deposit address was empty")
-        }
-        if (!evm.matches(raw)) {
-            return AddressDecision.Missing("Visible value is not a BEP20 address")
-        }
-        return AddressDecision.Ok(raw)
+        val single = snapshot.depositBlockText?.trim().orEmpty()
+        if (single.isNotEmpty()) return UsdtBep20Matcher.classify(single)
+        return AddressDecision.Missing("USDT BEP20 deposit address label was not visible")
     }
 
     fun isBep20Network(network: String): Boolean {
         val n = network.lowercase()
-        val bep = n.contains("bep-20") || n.contains("bep20") || n.contains("bnb") ||
-            n.contains("smart chain") || n.contains("bsc")
-        val trcOnly = (n.contains("trc-20") || n.contains("trc20") || n.contains("tron")) && !bep
-        return bep && !trcOnly
+        if (n.contains("trc-20") || n.contains("trc20") || n.contains("tron")) return false
+        return n.contains("bep-20") || n.contains("bep20") || n.contains("bnb smart chain")
     }
 
     fun toRow(username: String, decision: AddressDecision): AddressRow = when (decision) {
