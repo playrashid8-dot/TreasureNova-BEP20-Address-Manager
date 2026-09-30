@@ -30,20 +30,44 @@ object SiteOrigin {
         return authorityHost == host
     }
 
-    /** Form actions may be empty or same-document relative. Absolute targets must be an allowed origin. */
-    fun isCredentialActionAllowed(action: String?): Boolean {
+    /**
+     * Credential form actions are allowed only when they resolve onto the current page's
+     * allowlisted origin. Relative actions (empty, "/", "?", "#", or a same-document path)
+     * are resolved against [currentPageUrl] first. A value that is not that kind of relative
+     * path (for example "intent:...") is rejected even when it has no "://".
+     */
+    fun isCredentialActionAllowed(action: String?, currentPageUrl: String?): Boolean {
+        if (!isAllowed(currentPageUrl)) return false
         val value = action?.trim().orEmpty()
-        if (value.isEmpty()) return true
         if (value.any { it.isISOControl() || it.isWhitespace() }) return false
         if ('\\' in value || '@' in value) return false
-        if (value.startsWith("//")) return false
         val lower = value.lowercase()
-        if (lower.startsWith("javascript:") || lower.startsWith("data:") || lower.startsWith("blob:") || lower.startsWith("http:")) {
+        if (lower.startsWith("javascript:") ||
+            lower.startsWith("data:") ||
+            lower.startsWith("blob:") ||
+            lower.startsWith("intent:") ||
+            lower.startsWith("file:") ||
+            lower.startsWith("content:") ||
+            lower.startsWith("http:")
+        ) {
             return false
         }
-        if (value.startsWith("/") || value.startsWith("?") || value.startsWith("#")) return true
-        if ("://" !in value) return true
-        return isAllowed(value)
+        val sameDocument = value.isEmpty() ||
+            value.startsWith("/") ||
+            value.startsWith("./") ||
+            value.startsWith("../") ||
+            value.startsWith("?") ||
+            value.startsWith("#") ||
+            (':' !in value && !value.startsWith("//"))
+        if (value.startsWith("//")) return false
+        if (!sameDocument && "://" !in value) return false
+        val resolved = try {
+            val base = URI(currentPageUrl!!.trim())
+            if (value.isEmpty()) base else base.resolve(value)
+        } catch (_: Exception) {
+            return false
+        }
+        return isAllowed(resolved.toString())
     }
 
     fun maySubmitCredentials(currentUrl: String?): Boolean = isAllowed(currentUrl)

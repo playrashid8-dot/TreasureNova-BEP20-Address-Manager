@@ -39,8 +39,16 @@ class WebViewBridge(
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false)
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                if (!request.isForMainFrame) return false
-                return rejectUnlessAllowed(request.url?.toString().orEmpty())
+                val url = request.url?.toString().orEmpty()
+                if (!shouldCancelLoad(url, request.isForMainFrame)) return false
+                if (shouldMarkOriginRejected(url)) {
+                    originRejected = true
+                    if (request.isForMainFrame) {
+                        pageFinished?.invoke()
+                        pageFinished = null
+                    }
+                }
+                return true
             }
 
             @Deprecated("Required so older WebView paths cannot leave the allowlist")
@@ -53,7 +61,7 @@ class WebViewBridge(
             }
 
             override fun onPageFinished(view: WebView?, finished: String?) {
-                if (isHttpUrl(finished) && !SiteOrigin.isAllowed(finished)) {
+                if (shouldMarkOriginRejected(finished)) {
                     originRejected = true
                 }
                 pageFinished?.invoke()
@@ -86,16 +94,6 @@ class WebViewBridge(
             return
         }
         eval(PageScripts.install())
-        val snap = readSnapshot()
-        if (!snap.loginFieldsFound && !originRejected) {
-            clickIfAllowed("Login")
-            delay(800)
-            if (originRejected || !SiteOrigin.isAllowed(currentUrl())) {
-                originRejected = true
-                return
-            }
-            eval(PageScripts.install())
-        }
     }
 
     override suspend fun fillAndSubmit(username: String, password: String): PageSnapshot {
@@ -103,7 +101,12 @@ class WebViewBridge(
         eval(PageScripts.install())
         if (!credentialsAllowedSuspendCheck()) return refusedSnapshot()
         val candidates = parseControls(eval(PageScripts.listLoginControls()))
-        val chosen = LoginControlSelector.select(candidates)
+        val pageUrl = currentUrl()
+        if (!credentialsAllowed() || !SiteOrigin.isAllowed(pageUrl)) {
+            if (!SiteOrigin.isAllowed(pageUrl)) originRejected = true
+            return refusedSnapshot()
+        }
+        val chosen = LoginControlSelector.select(candidates, pageUrl)
         if (chosen == null) {
             return readSnapshot().copy(loginSubmitted = false)
         }
@@ -185,6 +188,7 @@ class WebViewBridge(
             loginFormVisible = probe.loginFieldsFound,
             authenticatedUiVisible = probe.authenticatedUiVisible,
             cookiesCleared = cleared,
+            loggedOutUiVisible = probe.loggedOutUiVisible,
         )
         return probe.copy(
             loggedOut = verification.loggedOut,
@@ -193,19 +197,21 @@ class WebViewBridge(
         )
     }
 
+    override fun wasSessionResetFailed(): Boolean = sessionResetFailed
+
     private fun credentialsAllowed(): Boolean {
         if (originRejected || sessionResetFailed) return false
         return true
     }
 
     private suspend fun credentialsAllowedSuspendCheck(): Boolean {
-        if (!credentialsAllowedSuspendCheck()) return false
         val url = currentUrl()
+        if (!credentialsAllowed()) return false
         if (!SiteOrigin.isAllowed(url)) {
             originRejected = true
             return false
         }
-        return true
+        return decideCredentials(originRejected, sessionResetFailed, url)
     }
 
     private fun refusedSnapshot(): PageSnapshot = PageSnapshot(
@@ -214,17 +220,12 @@ class WebViewBridge(
     )
 
     private fun rejectUnlessAllowed(url: String): Boolean {
-        if (!isHttpUrl(url)) return false
-        if (SiteOrigin.isAllowed(url)) return false
+        if (!shouldCancelLoad(url, isMainFrame = true)) return false
+        if (!shouldMarkOriginRejected(url)) return true
         originRejected = true
         pageFinished?.invoke()
         pageFinished = null
         return true
-    }
-
-    private fun isHttpUrl(url: String?): Boolean {
-        val value = url?.trim().orEmpty()
-        return value.startsWith("https://") || value.startsWith("http://")
     }
 
     private suspend fun clearWebViewSession(): Boolean = suspendCancellableCoroutine { cont ->
@@ -241,15 +242,23 @@ class WebViewBridge(
                 } else cm.removeAllCookies {
                     webView.post {
                         cm.flush()
-                        runCatching {
+                        val storageCleared = try {
                             WebStorage.getInstance().deleteAllData()
+                            true
+                        } catch (_: Exception) {
+                            false
+                        }
+                        val cacheCleared = try {
                             webView.clearCache(true)
                             webView.clearHistory()
                             webView.clearFormData()
+                            true
+                        } catch (_: Exception) {
+                            false
                         }
                         val left = cm.getCookie(probeUrl).orEmpty()
                         val leftWww = cm.getCookie("https://www.treasurenova.net/").orEmpty()
-                        val ok = left.isBlank() && leftWww.isBlank()
+                        val ok = storageCleared && cacheCleared && left.isBlank() && leftWww.isBlank()
                         if (cont.isActive) cont.resume(ok)
                     }
                 }
@@ -329,6 +338,8 @@ class WebViewBridge(
             sessionCleared = false,
             depositBlocks = blocks,
             authenticatedUiVisible = obj.optBoolean("authenticatedUiVisible"),
+            accountIdentity = obj.optString("accountIdentity").ifBlank { null },
+            loggedOutUiVisible = obj.optBoolean("loggedOutUiVisible"),
         )
     }
 
@@ -340,7 +351,31 @@ class WebViewBridge(
         }
         return trimmed
     }
+
+    companion object {
+        fun decideCredentials(originRejected: Boolean, sessionResetFailed: Boolean, currentUrl: String?): Boolean {
+            if (originRejected || sessionResetFailed) return false
+            return SiteOrigin.isAllowed(currentUrl)
+        }
+
+        fun shouldCancelLoad(url: String?, isMainFrame: Boolean): Boolean {
+            if (SiteOrigin.isAllowed(url)) return false
+            return if (isMainFrame) true else true
+        }
+
+        fun shouldMarkOriginRejected(url: String?): Boolean {
+            if (url.isNullOrBlank()) return false
+            val trimmed = url.trim()
+            val lower = trimmed.lowercase()
+            if (lower == "about:blank" || lower.startsWith("about:blank#") || lower.startsWith("about:blank?")) {
+                return false
+            }
+            if (SiteOrigin.isAllowed(trimmed)) return false
+            return true
+        }
+    }
 }
+
 
 
 private fun PageSnapshot.merge(later: PageSnapshot): PageSnapshot = PageSnapshot(
@@ -357,4 +392,6 @@ private fun PageSnapshot.merge(later: PageSnapshot): PageSnapshot = PageSnapshot
     depositBlockText = later.depositBlockText ?: depositBlockText,
     depositBlocks = if (later.depositBlocks.isNotEmpty()) later.depositBlocks else depositBlocks,
     authenticatedUiVisible = later.authenticatedUiVisible,
+    accountIdentity = later.accountIdentity ?: accountIdentity,
+    loggedOutUiVisible = later.loggedOutUiVisible,
 )

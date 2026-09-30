@@ -38,6 +38,8 @@ data class PageSnapshot(
     val depositBlockText: String? = null,
     val depositBlocks: List<String> = emptyList(),
     val authenticatedUiVisible: Boolean = false,
+    val accountIdentity: String? = null,
+    val loggedOutUiVisible: Boolean = false,
 )
 
 sealed class AddressDecision {

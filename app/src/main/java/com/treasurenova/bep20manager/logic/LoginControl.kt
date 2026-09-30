@@ -16,17 +16,17 @@ object LoginControlSelector {
     fun isSafeLabel(text: String): Boolean = text.trim().lowercase() in safeLabels
 
     /**
-     * Picks the login submit control. A type=submit control inside the login form wins when its
-     * label is exactly Login, Log In, or Sign In. Other buttons are ignored.
+     * Picks the login submit control that belongs to the login form. The form action is resolved
+     * against [currentPageUrl] and must stay on an allowlisted origin. Other buttons are ignored.
      */
-    fun select(candidates: List<LoginControlCandidate>): LoginControlCandidate? {
+    fun select(candidates: List<LoginControlCandidate>, currentPageUrl: String?): LoginControlCandidate? {
         val eligible = candidates.filter { candidate ->
             val tag = candidate.tag.trim().lowercase()
             val tagOk = tag == "button" || tag == "input"
             isSafeLabel(candidate.text) &&
                 tagOk &&
                 candidate.inLoginForm &&
-                SiteOrigin.isCredentialActionAllowed(candidate.formAction)
+                SiteOrigin.isCredentialActionAllowed(candidate.formAction, currentPageUrl)
         }
         return eligible.firstOrNull { it.submitControl } ?: eligible.firstOrNull()
     }

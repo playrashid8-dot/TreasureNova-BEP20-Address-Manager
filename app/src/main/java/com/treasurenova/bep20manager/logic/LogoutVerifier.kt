@@ -15,8 +15,15 @@ object LogoutVerifier {
         loginFormVisible: Boolean,
         authenticatedUiVisible: Boolean,
         cookiesCleared: Boolean,
+        loggedOutUiVisible: Boolean,
     ): LogoutVerification {
-        val pageLoggedOut = logoutClicked && loginFormVisible && !authenticatedUiVisible
+        // A password field by itself is not proof of logout. Logged-out UI must be visible
+        // and authenticated UI must be gone.
+        val passwordFieldAlone = loginFormVisible && !loggedOutUiVisible
+        val pageLoggedOut = logoutClicked &&
+            loggedOutUiVisible &&
+            !authenticatedUiVisible &&
+            !passwordFieldAlone
         return LogoutVerification(
             pageLoggedOut = pageLoggedOut,
             sessionCleared = cookiesCleared,

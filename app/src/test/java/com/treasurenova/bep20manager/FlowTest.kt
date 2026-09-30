@@ -10,6 +10,9 @@ import com.treasurenova.bep20manager.logic.AddressRow
 import com.treasurenova.bep20manager.logic.BatchEngine
 import com.treasurenova.bep20manager.logic.ExportFormatter
 import com.treasurenova.bep20manager.logic.LoginControlCandidate
+import com.treasurenova.bep20manager.automation.PageScripts
+import com.treasurenova.bep20manager.automation.WebViewBridge
+import com.treasurenova.bep20manager.logic.LoginConfirmation
 import com.treasurenova.bep20manager.logic.LoginControlSelector
 import com.treasurenova.bep20manager.logic.LogoutVerifier
 import com.treasurenova.bep20manager.logic.PageSnapshot
@@ -25,6 +28,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class FlowTest {
     private val good = "0x" + "ab".repeat(20)
@@ -113,10 +117,11 @@ class FlowTest {
         val logIn = control(7, "Log In", submit = false, inForm = true)
         val loginSubmit = control(8, "Login", submit = true, inForm = true, type = "submit", tag = "input")
 
-        assertEquals(signInSubmit, LoginControlSelector.select(listOf(randomLogin, signInSubmit, pay, nearbyConfirm)))
-        assertEquals(loginSubmit, LoginControlSelector.select(listOf(randomLogin, nearbyConfirm, loginSubmit, register)))
-        assertEquals(logIn, LoginControlSelector.select(listOf(pay, withdraw, register, nearbyConfirm, confirmSubmit, logIn)))
-        assertNull(LoginControlSelector.select(listOf(pay, withdraw, register, nearbyConfirm, confirmSubmit, randomLogin)))
+        val page = "https://treasurenova.net/login"
+        assertEquals(signInSubmit, LoginControlSelector.select(listOf(randomLogin, signInSubmit, pay, nearbyConfirm), page))
+        assertEquals(loginSubmit, LoginControlSelector.select(listOf(randomLogin, nearbyConfirm, loginSubmit, register), page))
+        assertEquals(logIn, LoginControlSelector.select(listOf(pay, withdraw, register, nearbyConfirm, confirmSubmit, logIn), page))
+        assertNull(LoginControlSelector.select(listOf(pay, withdraw, register, nearbyConfirm, confirmSubmit, randomLogin), page))
         assertTrue(LoginControlSelector.isSafeLabel("Login"))
         assertTrue(LoginControlSelector.isSafeLabel("Log In"))
         assertTrue(LoginControlSelector.isSafeLabel("Sign In"))
@@ -130,9 +135,9 @@ class FlowTest {
         assertTrue(Safety.allowClick("Sign In"))
 
         val foreignPost = control(9, "Login", submit = true, inForm = true, action = "https://treasurenova.com/login")
-        assertNull(LoginControlSelector.select(listOf(foreignPost)))
+        assertNull(LoginControlSelector.select(listOf(foreignPost), page))
         val sameSite = control(10, "Login", submit = true, inForm = true, action = "https://treasurenova.net/login")
-        assertEquals(sameSite, LoginControlSelector.select(listOf(foreignPost, sameSite)))
+        assertEquals(sameSite, LoginControlSelector.select(listOf(foreignPost, sameSite), page))
     }
 
     @Test
@@ -142,21 +147,22 @@ class FlowTest {
             loginFormVisible = true,
             authenticatedUiVisible = false,
             cookiesCleared = true,
+            loggedOutUiVisible = true,
         )
         assertTrue(ok.loggedOut)
         assertTrue(ok.sessionCleared)
         assertTrue(ok.confirmed)
 
-        val cookiesLeft = LogoutVerifier.verify(true, true, false, cookiesCleared = false)
+        val cookiesLeft = LogoutVerifier.verify(true, true, false, cookiesCleared = false, loggedOutUiVisible = true)
         assertTrue(cookiesLeft.pageLoggedOut)
         assertFalse(cookiesLeft.loggedOut)
         assertFalse(cookiesLeft.confirmed)
 
-        val stillAuthenticated = LogoutVerifier.verify(true, loginFormVisible = false, authenticatedUiVisible = true, cookiesCleared = true)
+        val stillAuthenticated = LogoutVerifier.verify(true, loginFormVisible = false, authenticatedUiVisible = true, cookiesCleared = true, loggedOutUiVisible = false)
         assertFalse(stillAuthenticated.pageLoggedOut)
         assertFalse(stillAuthenticated.loggedOut)
 
-        val clickMissed = LogoutVerifier.verify(false, true, false, true)
+        val clickMissed = LogoutVerifier.verify(false, true, false, true, loggedOutUiVisible = true)
         assertFalse(clickMissed.loggedOut)
 
         val kept = SessionIsolation.apply(AddressRow("alice", good, "Success", ""), loggedOut = true, sessionCleared = true)
@@ -178,9 +184,12 @@ class FlowTest {
         assertTrue(SiteOrigin.isAllowed("https://treasurenova.net/"))
         assertTrue(SiteOrigin.isAllowed("https://treasurenova.net/login"))
         assertTrue(SiteOrigin.isAllowed("https://www.treasurenova.net/account"))
-        assertTrue(SiteOrigin.isCredentialActionAllowed(""))
-        assertTrue(SiteOrigin.isCredentialActionAllowed("/login"))
-        assertTrue(SiteOrigin.isCredentialActionAllowed("https://www.treasurenova.net/session"))
+        val here = "https://treasurenova.net/login"
+        assertTrue(SiteOrigin.isCredentialActionAllowed("", here))
+        assertTrue(SiteOrigin.isCredentialActionAllowed("/login", here))
+        assertTrue(SiteOrigin.isCredentialActionAllowed("?", here))
+        assertTrue(SiteOrigin.isCredentialActionAllowed("#session", here))
+        assertTrue(SiteOrigin.isCredentialActionAllowed("https://www.treasurenova.net/session", here))
         assertFalse(SiteOrigin.isAllowed("https://treasurenova.com/"))
         assertFalse(SiteOrigin.isAllowed("http://treasurenova.net/"))
         assertFalse(SiteOrigin.isAllowed("http://www.treasurenova.net/"))
@@ -191,9 +200,14 @@ class FlowTest {
         assertFalse(SiteOrigin.isAllowed("https://treasurenova.net:8443/"))
         assertFalse(SiteOrigin.isAllowed("https://user:pass@treasurenova.net/"))
         assertFalse(SiteOrigin.isAllowed("javascript:alert(1)"))
-        assertFalse(SiteOrigin.isCredentialActionAllowed("https://treasurenova.com/login"))
-        assertFalse(SiteOrigin.isCredentialActionAllowed("http://treasurenova.net/login"))
-        assertFalse(SiteOrigin.isCredentialActionAllowed("//evil.example/login"))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("https://treasurenova.com/login", here))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("http://treasurenova.net/login", here))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("//evil.example/login", here))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("", "https://evil.example/"))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("/login", "https://treasurenova.com/"))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("intent:scan", here))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("javascript:alert(1)", here))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("data:text/html,1", here))
         assertFalse(SiteOrigin.maySubmitCredentials("https://treasurenova.com/"))
     }
 
@@ -352,6 +366,331 @@ class FlowTest {
         assertTrue(encoded.startsWith("\""))
     }
 
+
+    @Test
+    fun credentialsAllowedSuspendCheckDoesNotRecurseAndUsesOriginGate() {
+        val source = readSource("src/main/java/com/treasurenova/bep20manager/automation/WebViewBridge.kt")
+        val body = functionBody(source, "credentialsAllowedSuspendCheck")
+        assertFalse(body.contains("credentialsAllowedSuspendCheck"))
+        assertTrue(body.contains("credentialsAllowed()"))
+        assertTrue(body.contains("SiteOrigin.isAllowed"))
+        assertTrue(body.contains("decideCredentials("))
+        assertTrue(body.contains("return "))
+        val fill = functionBody(source, "fillAndSubmit")
+        val checkAt = fill.indexOf("credentialsAllowedSuspendCheck()")
+        val fillAt = fill.indexOf("fillLogin")
+        assertTrue(checkAt >= 0 && fillAt > checkAt)
+        val allowedFn = functionBody(source, "credentialsAllowed")
+        assertTrue(allowedFn.contains("sessionResetFailed"))
+        assertTrue(allowedFn.contains("originRejected"))
+    }
+
+    @Test
+    fun webViewBridgeDecideCredentialsBlocksDisallowedOriginAndSessionReset() {
+        assertFalse(WebViewBridge.decideCredentials(originRejected = false, sessionResetFailed = false, currentUrl = "https://evil.example/"))
+        assertFalse(WebViewBridge.decideCredentials(originRejected = false, sessionResetFailed = false, currentUrl = "http://treasurenova.net/"))
+        assertFalse(WebViewBridge.decideCredentials(originRejected = false, sessionResetFailed = false, currentUrl = "javascript:alert(1)"))
+        assertFalse(WebViewBridge.decideCredentials(originRejected = false, sessionResetFailed = false, currentUrl = "intent://scan/#Intent;end"))
+        assertFalse(WebViewBridge.decideCredentials(originRejected = false, sessionResetFailed = false, currentUrl = "data:text/html,hi"))
+        assertFalse(WebViewBridge.decideCredentials(originRejected = true, sessionResetFailed = false, currentUrl = "https://treasurenova.net/"))
+        assertFalse(WebViewBridge.decideCredentials(originRejected = false, sessionResetFailed = true, currentUrl = "https://www.treasurenova.net/login"))
+        assertFalse(WebViewBridge.decideCredentials(originRejected = false, sessionResetFailed = false, currentUrl = null))
+        assertFalse(WebViewBridge.decideCredentials(originRejected = false, sessionResetFailed = false, currentUrl = ""))
+        assertTrue(WebViewBridge.decideCredentials(originRejected = false, sessionResetFailed = false, currentUrl = "https://treasurenova.net/login"))
+        assertTrue(WebViewBridge.decideCredentials(originRejected = false, sessionResetFailed = false, currentUrl = "https://www.treasurenova.net/account"))
+        assertFalse(LoginConfirmation.confirmed(PageSnapshot(loginSubmitted = true, authenticatedUiVisible = false)))
+        assertTrue(
+            LoginConfirmation.confirmed(
+                PageSnapshot(loginSubmitted = true, authenticatedUiVisible = true, accountIdentity = "alice"),
+            ),
+        )
+    }
+
+    @Test
+    fun navigationGuardCancelsUnauthorizedIframesAndDangerousSchemes() {
+        assertFalse(WebViewBridge.shouldCancelLoad("https://treasurenova.net/login", isMainFrame = true))
+        assertFalse(WebViewBridge.shouldCancelLoad("https://www.treasurenova.net/", isMainFrame = false))
+        assertTrue(WebViewBridge.shouldCancelLoad("https://evil.example/frame", isMainFrame = false))
+        assertTrue(WebViewBridge.shouldCancelLoad("javascript:alert(1)", isMainFrame = true))
+        assertTrue(WebViewBridge.shouldCancelLoad("intent:scan", isMainFrame = true))
+        assertTrue(WebViewBridge.shouldCancelLoad("data:text/html,hi", isMainFrame = false))
+        assertTrue(WebViewBridge.shouldCancelLoad("http://treasurenova.net/", isMainFrame = true))
+        assertTrue(WebViewBridge.shouldMarkOriginRejected("javascript:alert(1)"))
+        assertTrue(WebViewBridge.shouldMarkOriginRejected("intent://evil.example/"))
+        assertTrue(WebViewBridge.shouldMarkOriginRejected("data:text/html,1"))
+        assertTrue(WebViewBridge.shouldMarkOriginRejected("https://treasurenova.com/"))
+        assertFalse(WebViewBridge.shouldMarkOriginRejected("https://treasurenova.net/"))
+        assertFalse(WebViewBridge.shouldMarkOriginRejected("about:blank"))
+        val source = readSource("src/main/java/com/treasurenova/bep20manager/automation/WebViewBridge.kt")
+        assertFalse(source.contains("if (!request.isForMainFrame) return false"))
+        assertFalse(source.contains("if (!isHttpUrl(url)) return false"))
+        val nav = functionBody(source, "shouldOverrideUrlLoading")
+        assertTrue(nav.contains("shouldCancelLoad"))
+        assertTrue(nav.contains("isForMainFrame"))
+        assertTrue(nav.contains("originRejected = true"))
+    }
+
+    @Test
+    fun relativeFormActionResolvesAgainstCurrentOrigin() {
+        val here = "https://treasurenova.net/login"
+        assertTrue(SiteOrigin.isCredentialActionAllowed("", here))
+        assertTrue(SiteOrigin.isCredentialActionAllowed("/", here))
+        assertTrue(SiteOrigin.isCredentialActionAllowed("/login", here))
+        assertTrue(SiteOrigin.isCredentialActionAllowed("?", "https://www.treasurenova.net/account"))
+        assertTrue(SiteOrigin.isCredentialActionAllowed("#token", here))
+        assertTrue(SiteOrigin.isCredentialActionAllowed("next", here))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("", null))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("/login", "https://evil.example/a"))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("?x=1", "http://treasurenova.net/login"))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("", "https://treasurenova.net.evil.com/"))
+    }
+
+    @Test
+    fun credentialActionRejectsIntentJavascriptAndData() {
+        val here = "https://treasurenova.net/"
+        assertFalse(SiteOrigin.isCredentialActionAllowed("intent:scan", here))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("intent://evil.example/a", here))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("javascript:alert(1)", here))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("data:text/html,1", here))
+        assertFalse(SiteOrigin.isCredentialActionAllowed("foo:bar", here))
+        val intent = control(1, "Login", submit = true, inForm = true, action = "intent:scan")
+        assertNull(LoginControlSelector.select(listOf(intent), here))
+        val relative = control(2, "Login", submit = true, inForm = true, action = "/session")
+        assertEquals(relative, LoginControlSelector.select(listOf(intent, relative), here))
+        assertNull(LoginControlSelector.select(listOf(relative), "https://evil.example/"))
+    }
+
+    @Test
+    fun loadLoginDoesNotClickGenericLoginNode() {
+        val source = readSource("src/main/java/com/treasurenova/bep20manager/automation/WebViewBridge.kt")
+        val body = functionBody(source, "loadLogin")
+        assertFalse(body.contains("clickIfAllowed(\"Login\")"))
+        assertFalse(body.contains("clickIfAllowed(\"Log In\")"))
+        assertFalse(body.contains("clickIfAllowed(\"Sign In\")"))
+        assertTrue(body.contains("loadUrl"))
+    }
+
+    @Test
+    fun fillLoginAndLoginRootStayInsideTheSameForm() {
+        val js = PageScripts.library
+        val fill = jsFunction(js, "fillLogin: function")
+        assertTrue(fill.contains("usernameWithin"))
+        assertTrue(fill.contains("root.contains"))
+        assertFalse(fill.contains("document.querySelector"))
+        val root = jsFunction(js, "function loginRoot")
+        assertTrue(root.contains("usernameWithin(root)"))
+        assertFalse(root.contains("document.querySelector('input[placeholder"))
+        assertFalse(js.contains("button,a,li,span,div"))
+        assertFalse(js.contains("span,div"))
+        val click = jsFunction(js, "function clickExact")
+        assertTrue(click.contains("button, a, input[type=\"submit\"], input[type=\"button\"]"))
+        assertFalse(click.contains("span"))
+        assertFalse(click.contains("div"))
+    }
+
+    @Test
+    fun loginNotConfirmedStopsBatchBeforeWallet() = runBlocking {
+        val bridge = FakeBridge(good)
+        bridge.loginSucceeds = false
+        val rows = SessionController(bridge, awaitTwoFactor = {}, shouldStop = { false })
+            .runBatch(
+                listOf(
+                    AccountInput("1", "alice", "pw-a"),
+                    AccountInput("2", "bob", "pw-b"),
+                ),
+                confirmed = true,
+            )
+        assertEquals(listOf("alice"), rows.map { it.username })
+        assertEquals("Failed", rows[0].status)
+        assertTrue(rows[0].haltBatch)
+        assertEquals("", rows[0].bep20Address)
+        assertTrue(rows[0].error.contains("Login was not confirmed"))
+        assertFalse(bridge.calls.contains("wallet"))
+        assertFalse(bridge.calls.contains("fill:bob"))
+        assertFalse(rows.joinToString().contains("pw-"))
+    }
+
+    @Test
+    fun identityNotConfirmedDoesNotSaveAddressAndStopsBatch() = runBlocking {
+        val bridge = FakeBridge(good)
+        bridge.identityOnRead = "someone-else"
+        val rows = SessionController(bridge, awaitTwoFactor = {}, shouldStop = { false })
+            .runBatch(
+                listOf(
+                    AccountInput("1", "alice", "pw-a"),
+                    AccountInput("2", "bob", "pw-b"),
+                ),
+                confirmed = true,
+            )
+        assertEquals(1, rows.size)
+        assertEquals("Failed", rows[0].status)
+        assertEquals("", rows[0].bep20Address)
+        assertTrue(rows[0].haltBatch)
+        assertTrue(rows[0].error.contains("identity"))
+        assertFalse(rows[0].bep20Address.contains(good))
+        assertFalse(bridge.calls.contains("fill:bob"))
+        assertFalse(LoginConfirmation.identityMatches("alice", null))
+        assertFalse(LoginConfirmation.identityMatches("alice", ""))
+        assertFalse(LoginConfirmation.identityMatches("alice", "bob"))
+        assertTrue(LoginConfirmation.identityMatches("alice", "alice"))
+    }
+
+    @Test
+    fun parentUnder800GluingUsdtAndBep20OntoUnrelatedAddressIsRejected() {
+        val unrelated = other
+        val usdtChild = "USDT"
+        val bepChild = "BEP20"
+        val parent = "$usdtChild $bepChild $unrelated"
+        assertTrue(parent.length < 800)
+        val glued = UsdtBep20Matcher.fromBlocks(listOf(parent, usdtChild, bepChild, unrelated))
+        assertFalse(glued is AddressDecision.Ok)
+        val distant = "USDT BEP20" + " ".repeat(260) + unrelated
+        assertTrue(distant.length < 800)
+        assertFalse(UsdtBep20Matcher.classify(distant) is AddressDecision.Ok)
+        assertTrue(UsdtBep20Matcher.isUnrelatedGluedParent(parent, listOf(parent, usdtChild, bepChild, unrelated)))
+    }
+
+    @Test
+    fun childOkDoesNotWinWhenParentHasMultipleAddressesOrOtherNetwork() {
+        val child = "USDT Deposit Address (BEP-20) $good"
+        assertTrue(UsdtBep20Matcher.classify(child) is AddressDecision.Ok)
+        val multi = "USDT BEP-20 $good $other"
+        assertTrue(multi.length < 800)
+        val fromMulti = UsdtBep20Matcher.fromBlocks(listOf(multi, child))
+        assertFalse(fromMulti is AddressDecision.Ok)
+        val otherNetwork = "USDT TRC-20 $other"
+        val parent = "$otherNetwork $child"
+        assertTrue(parent.length < 800)
+        val fromNetwork = UsdtBep20Matcher.fromBlocks(listOf(parent, child, otherNetwork))
+        assertFalse(fromNetwork is AddressDecision.Ok)
+        assertTrue(fromNetwork is AddressDecision.NetworkMismatch || fromNetwork is AddressDecision.Missing)
+    }
+
+    @Test
+    fun bep20TokenDoesNotMatchInsideUnrelatedTokens() {
+        assertFalse(UsdtBep20Matcher.classify("USDT xbep20 $good") is AddressDecision.Ok)
+        assertFalse(UsdtBep20Matcher.classify("USDT bep200 $good") is AddressDecision.Ok)
+        assertFalse(UsdtBep20Matcher.classify("USDT mybep-20coin $good") is AddressDecision.Ok)
+        assertFalse(UsdtBep20Matcher.classify("USDT BEP20USDT $good") is AddressDecision.Ok)
+        val hyphen = UsdtBep20Matcher.classify("USDT Deposit Address (BEP-20) $good")
+        assertEquals(good, (hyphen as AddressDecision.Ok).address)
+        val plain = UsdtBep20Matcher.classify("Send USDT on BEP20 $good")
+        assertEquals(good, (plain as AddressDecision.Ok).address)
+    }
+
+    @Test
+    fun logoutProbeDoesNotTreatPasswordFieldAsLoggedOut() {
+        val js = PageScripts.library
+        val probe = jsFunction(js, "logoutProbe: function")
+        assertFalse(probe.contains("if (!loginFields)"))
+        assertFalse(probe.contains("authenticatedUiVisible = false"))
+        assertFalse(probe.contains("authenticatedUiVisible = !loginFields"))
+        assertTrue(probe.contains("authenticatedUi()"))
+        assertTrue(probe.contains("loggedOutUi()"))
+        val loggedOut = jsFunction(js, "function loggedOutUi")
+        assertFalse(loggedOut.contains("input[type=\"password\"]"))
+        assertTrue(js.contains("isUnrelatedParent"))
+        val blocks = jsFunction(js, "function depositBlocks")
+        assertTrue(blocks.contains("isUnrelatedParent"))
+    }
+
+    @Test
+    fun passwordFieldAloneDoesNotConfirmLogout() {
+        val passwordOnly = LogoutVerifier.verify(
+            logoutClicked = true,
+            loginFormVisible = true,
+            authenticatedUiVisible = false,
+            cookiesCleared = true,
+            loggedOutUiVisible = false,
+        )
+        assertFalse(passwordOnly.pageLoggedOut)
+        assertFalse(passwordOnly.loggedOut)
+        assertFalse(passwordOnly.confirmed)
+        val real = LogoutVerifier.verify(
+            logoutClicked = true,
+            loginFormVisible = true,
+            authenticatedUiVisible = false,
+            cookiesCleared = true,
+            loggedOutUiVisible = true,
+        )
+        assertTrue(real.loggedOut)
+    }
+
+    @Test
+    fun sessionResetFailedIsReadAndHaltsBatch() = runBlocking {
+        val bridge = FakeBridge(good)
+        bridge.resetFailed = true
+        val rows = SessionController(bridge, awaitTwoFactor = {}, shouldStop = { false })
+            .runBatch(
+                listOf(
+                    AccountInput("1", "alice", "pw-a"),
+                    AccountInput("2", "bob", "pw-b"),
+                ),
+                confirmed = true,
+            )
+        assertEquals(listOf("alice"), rows.map { it.username })
+        assertEquals("Failed", rows[0].status)
+        assertTrue(rows[0].haltBatch)
+        assertTrue(rows[0].error.contains("Session reset"))
+        assertFalse(bridge.calls.contains("fill:alice"))
+        assertFalse(bridge.calls.contains("fill:bob"))
+        assertTrue(bridge.wasSessionResetFailed())
+    }
+
+    @Test
+    fun deleteAllDataResultIsRequiredForSessionReset() {
+        val source = readSource("src/main/java/com/treasurenova/bep20manager/automation/WebViewBridge.kt")
+        val body = functionBody(source, "clearWebViewSession")
+        assertTrue(body.contains("deleteAllData()"))
+        assertTrue(body.contains("storageCleared"))
+        assertTrue(body.contains("storageCleared &&"))
+        assertFalse(body.contains("runCatching"))
+        val controller = readSource("src/main/java/com/treasurenova/bep20manager/automation/SessionController.kt")
+        assertTrue(controller.contains("wasSessionResetFailed()"))
+        assertTrue(controller.contains("haltBatch = true"))
+    }
+
+
+    private fun readSource(relative: String): String {
+        var dir = File(System.getProperty("user.dir")).absoluteFile
+        repeat(6) {
+            val candidate = File(dir, relative)
+            if (candidate.isFile) return candidate.readText()
+            val appCandidate = File(dir, "app/$relative")
+            if (appCandidate.isFile) return appCandidate.readText()
+            dir = dir.parentFile ?: return@repeat
+        }
+        error("Cannot find $relative from " + File(".").absolutePath)
+    }
+
+    private fun functionBody(source: String, name: String): String {
+        val marker = "fun $name"
+        val start = source.indexOf(marker)
+        if (start < 0) error("missing $name")
+        return braceBody(source, source.indexOf('{', start))
+    }
+
+    private fun jsFunction(source: String, name: String): String {
+        val start = source.indexOf(name)
+        if (start < 0) error("missing $name")
+        return braceBody(source, source.indexOf('{', start))
+    }
+
+    private fun braceBody(source: String, brace: Int): String {
+        var depth = 0
+        for (i in brace until source.length) {
+            when (source[i]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return source.substring(brace + 1, i)
+                }
+            }
+        }
+        error("unclosed body")
+    }
+
+
     private fun control(
         index: Int,
         text: String,
@@ -379,11 +718,18 @@ private class FakeBridge(private val address: String) : PageBridge {
     var loginFormAfterLogout = true
     var authenticatedUiAfterLogout = false
     var cookiesCleared = true
+    var loggedOutUiAfterLogout = true
+    var loginSucceeds = true
+    var resetFailed = false
+    var identityOnRead: String? = null
+    private var activeUser = ""
     val sessionsAtFill = mutableListOf<Int>()
     var reusedAuthenticatedSession = false
     private var fills = 0
     private var authenticated = false
     private var sessionGeneration = 0
+
+    override fun wasSessionResetFailed(): Boolean = resetFailed
 
     override suspend fun loadLogin() { calls += "load" }
 
@@ -394,10 +740,18 @@ private class FakeBridge(private val address: String) : PageBridge {
         fills += 1
         authenticated = true
         check(!password.isBlank())
+        activeUser = username
         return if (twoFactorOnce && fills == 1) {
             PageSnapshot(twoFactorVisible = true, loginFieldsFound = true, loginSubmitted = true)
+        } else if (!loginSucceeds) {
+            PageSnapshot(loginFieldsFound = true, loginSubmitted = false, authenticatedUiVisible = false)
         } else {
-            PageSnapshot(loginFieldsFound = true, loginSubmitted = true)
+            PageSnapshot(
+                loginFieldsFound = true,
+                loginSubmitted = true,
+                authenticatedUiVisible = true,
+                accountIdentity = username,
+            )
         }
     }
 
@@ -416,7 +770,13 @@ private class FakeBridge(private val address: String) : PageBridge {
 
     override suspend fun readSnapshot(): PageSnapshot {
         calls += "read"
-        return PageSnapshot(depositBlocks = listOf("USDT Deposit Address (BEP-20) $address"))
+        val identity = identityOnRead ?: activeUser
+        return PageSnapshot(
+            depositBlocks = listOf("USDT Deposit Address (BEP-20) $address"),
+            loginSubmitted = true,
+            authenticatedUiVisible = true,
+            accountIdentity = identity,
+        )
     }
 
     override suspend fun logout(): PageSnapshot {
@@ -426,6 +786,7 @@ private class FakeBridge(private val address: String) : PageBridge {
             loginFormVisible = loginFormAfterLogout,
             authenticatedUiVisible = authenticatedUiAfterLogout,
             cookiesCleared = cookiesCleared,
+            loggedOutUiVisible = loggedOutUiAfterLogout,
         )
         if (verification.confirmed) {
             authenticated = false
